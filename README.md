@@ -30,6 +30,20 @@ solve(list);
 
 ```
 
+주의 ) 아래와 같이 Integer는 heap 영역에서 관리하는 Object 타입인데
+변경되지 않는 이유는 String과 동일하게 불변객체(immutable)이기 때문
+
+- Wrapper class 에 해당하는 Integer, Character, Byte, Boolean, Long, Double, Float, Short 클래스 모두 Immutable
+
+```
+Integer a = 10;
+solve(a); 
+=> solve 함수에서 값을 변경하면 바뀌지 않는다!!!
+```
+=> 실행 순서는 a가 가르키는 10은 heap 에 생성되지만 solve 라는 함수로   
+param = 10 으로 넘어갈때 Wrapper class 는 기존에 레러펀스하고 있던 값을  
+새롭게 생성된 오브젝트를 만들기 때문에 함수가 끝나고 나면 변경된 값 pop 되기때문 !!!   
+
 
 
 
@@ -63,6 +77,16 @@ solve(list);
 **GC**
 
 - Heap 메모리 영역에 생성된(적재)된 객체들 중에 참조되지 않은 객체들을 탐색 후 제거하는 역할
+
+```
+String url = "abc";
+url += "def";
+
+=> + 하는 순간 새롭게 "abcdef" 라는 객체를 만들고 url이 레퍼런스
+==> 처음 "abc" 오브젝트는 Unreachable 오브젝트라 하고 GC의 대상!!
+```
+
+
 - Stop The World : GC 실행을 위해 JVM이 애플리케이션 실행을 멈추는 것(GC 튜닝이랑 이 시간을 줄이는 것)
 - Mark and Sweep 이라고도 함( GC가 스택의 모든 변수 또는 Reachable 객체를 스캔하면서 어떤 객체를 참조하는지 찾는 과정을 Mark이며 이과정에서 Stop The world 발생 / 이두 Mark 되어있지 않은 객체들을 힙에서 제거 하는 과정을 Sweep
 - GC가 역할을 하는 시간은 정확히 언제인지를 알수 없음( 참조가 없어지자마다 해제되는 것을 보장하지 않음)
@@ -95,6 +119,122 @@ solve(list);
   1) Method area 영역 : 클래스 멤버 변수 
 
 
+### GC 로깅
+
+- System.gc() // 가비지 컬렌션이 일어나도록 코드 삽입 할수 있지만 모든 스레드 중단되기 때문에 코드단에서 절때 호출 하지 말것 
+
+**JVM 옵션 정리**
+
+```
+-verbose:gc                     //
+-XX:+PrintCommandLineFlag       // 어떤 가비지 컬렉터를 사용하는지 볼수 있음
+-Xms
+-Xmx
+
+```
+
+-Xmx16m -verbose:gc -XX:+PrintCommandLineFlags // OutofMemoryError를 빨리 내기 위해 jvm 옵션 설정 
+
+1) 프로그램이 메모리 부족으로 죽는 경우 
+
+- java.lang.OutOfMemoryError: Java heap space 에러 발생 ! 
+- 무한루프 외부에서 선언한 ArrayList는 무한루프가 도는 동안에도 계속해서 Reachable 하기 때문에 (레퍼런스가 끊이질 않기때문에 가비지 컬렉션 작업이 진행되어도 힙에 모든 데이터가 남아 있게 됨!)
+=> 무한루프를 돌기때문에 프로그램이 죽은 것이 가비지 컬렉션이 수행되어도 모든 오브젝트가 살아 있기 때문에 OOM 에러 발생 !   
+
+```
+public class ListGCTest {
+    public static void main(String[] args) throws Exception {
+        List<Integer> li = IntStream.range(1, 100).boxed().collect(Collectors.toList());
+        for (int i=1; true; i++) {
+            if (i % 100 == 0) {
+                Thread.sleep(100);
+            }
+            IntStream.range(0, 100).forEach(li::add);
+        }
+    }
+}
+```
+
+2) 가비지 컬렉터가 열일하여 프로그램이 죽지 않는 경우 
+
+```
+public class ListGCTest {
+    public static void main(String[] args)throws Exception {
+        List<Integer> li = IntStream.range(1, 100).boxed().collect(Collectors.toList());
+        for (int i=1; true; i++) {
+            if (i % 100 == 0) {
+                li = new ArrayList<>();
+                Thread.sleep(100);
+            }
+            IntStream.range(0, 100).forEach(li::add);
+        }
+    }
+}
+```
+
+- 위의 내용은 100번째 단위로 루프를 돌때마다 기존에 가지고 있던 리스트를 가비지로 만들어주니 프로그램이 죽지 않고 계속 돌아감 ! 
+
+### 메모리 구성 Metaspace 와 Heap
+
+1) Metaspace
+
+- 자바 8에 적용된 변화는 람다, 스트림, 인터페이스의 default 지시자가 대표적!
+- 메모리 관점에서 가장 큰 변화는 PermGen 이 사라지고 Metaspace 가 이를 대체하게 됨!
+
+1-1) PermGen 은 자바 7까지 메타데이터를 저장하던 영역이였고 Heap의 일부
+
+- Permanent Generation은 힙 메모리 영역중에 하나로 자바 애플리케이션을 실행할 때 클래스의 메타데이터를 저장하던 영역 (자바 7기준)  
+- OutOfMemoryError: PermGen Space error 는 더이상 볼수 없고 JVM 옵션으로 사용했던 PermSize 와 MaxPermSize는 더이상 사용할 필요가 없다. 이 대신에 MetaspaceSize 및 MaxMetaspaceSize가 새롭게 사용되게 됨  
+
+==> 자바 8부터 클래스들은 모두 힙이 아닌 네이티브 메모리를 사용하는 Metaspace에 할당 됨
+
+```
+public class MetaspaceTest {
+    static javassist.ClassPool cp = javassist.ClassPool.getDefault();
+
+    public static void main(String[] args) throws Exception{
+        for (int i = 0; ; i++) {
+            if (i % 1000 == 0) Thread.sleep(100);
+            Class c = cp.makeClass("test" + i).toClass();
+        }
+    }
+}
+```
+
+- 위 코드는 metaspace를 사용하게 될 class 들을 런타임시에 생성 
+- javassist 라이브러리 추가하고 VIsualVm 에서 모니터링! ( vm 옵션으로 -XX:MaxMetaspaceSize=128m 주고 실행시킴 ! ) 
+- java.lang.OutOfMemoryError:Metaspace 에러로 프로그램이 죽음 
+
+2) Heap - Old & Young ( Eden, Survivor)
+
+- Heap 은 Young Generation, Old Generation 으로 크게 두개의 영역으로 나뉘어짐 
+- Young Generation 은 또다시 Eden, Survivor Space 0, 1 로 세분화 되어짐! 
+- S0, S1 으로 표시되는 영역이 Survivor Space 0, 1
+
+**가비지 컬렉션 프로세스**
+
+- 새로운 오브젝트는 Eden 영역에 할당 됨. 두개의 Survivor Space 는 비워진 상태로 시작함
+- Eden 영역이 가득차면, MinorGC가 발생함
+- MinorGC가 발생하면, Reachable 오브젝트들은 S0 으로 옮겨진다. Unreachable 오브젝트들은 Eden 영역이 클리어 될때 함께 메모리에서 사라짐 !!  
+- 다음 Minor GC가 발생할때, Eden 역에는 3번과 같은 과정이 발생함. Unreachable 오브젝트들은 지워지고, Reachable 오브젝트들은 Survivor Space 로 이동함. 기존에 S0 에 있었던 Reachable 오브젝트들은 S1으로 옮겨지는데, 이째 age값이 증가되어 옮겨진다. 살아남은 모든 오브젝트들이 S1으로 모두 옮겨지면, S0 와 Eden은 클리어 됨. 
+=> Survivor Space 에서 Survivor Space 로의 이동은 이동할때마다 age 값이 증가한다.   
+
+- 다음 MinorGC가 발생하면, 4번과정이 반복되는데 S1 이 가측차 있었으므로 S1에서 살아남은 오브젝트들은 S0로 옮겨지면서 Eden 과 S1 은 클리어 된다. 이때에도 age값이 증가되어 옮겨진다.
+
+- Young Generation 에서 계속해서 살아남으며 age 값이 증가하는 오브젝트들은 age 값이 특정값 이상이 되면 Old Generation 으로 옮겨지는데 이 단계를 Promotion 이라고 함 !!!     
+
+- MinorGC가 계속 반복되면, Promtion 작업도 꾸준히 발생하게 됨!! 
+- Promiton 작업이 계속해서 반복되면서 Old Generation 이 가득차게 되면 MajorGC가 발생하게 됨!!!  
+
+**용어 정리**
+
+- MinorGC : Young Generation 에서 발생하는 GC
+- MajorGC : Old Generation 에서 발생하는 GC
+- FullGC : Heap 전체를 clear 하는 작업(Young/Old 공간 모두)   
+
+
+
+
 ### JVM 모니터링과 툴링
 
 **VisualVM**
@@ -102,7 +242,10 @@ solve(list);
 - jdk 1.6 이상부터는 별도의 설치 없이 실행 가능 ( /bin/jvisualvm )
 
 - jconsole을 대체하는 툴 => JVM을 실시간으로 모니터링 할수 있는 오픈소스 기반 툴
-- heap 덤프 및 쓰레드 덤프 가능 
+- heap 덤프 및 쓰레드 덤프 가능
+- VisualGC 플러그인 설치 (VisualVM 에서 Toll > Plugins > Available Plugins 에서 install )
+
+
 
 ### 메모리 누수 해결책
 
@@ -143,5 +286,5 @@ public String getFileContent(String filename) {
 
 
 
-
+참고 : https://yaboong.github.io/java/2018/06/09/java-garbage-collection/
 
